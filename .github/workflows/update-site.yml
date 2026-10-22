@@ -1,0 +1,59 @@
+# Publicação do site no GitHub Pages.
+# Dispara:
+#   - em push para main que mexa no site (site/**)
+#   - quando o workflow "Recolher dados" termina com sucesso
+#     (workflow_run — os commits do GITHUB_TOKEN não disparam eventos
+#      push, por isso aqui não basta ouvir push)
+# Rebuilda os agregados porque site/data/ está no .gitignore.
+name: Publicar site
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/deploy-site.yml"]
+  workflow_run:
+    workflows: ["Recolher dados"]
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # ref: main garante que apanha o commit de dados que o workflow
+      # "Recolher dados" acabou de fazer (o checkout por omissão do
+      # workflow_run ficaria no commit anterior)
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Agregar (stats.json + CSVs para download)
+        run: uv run build_site_data.py
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload do site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publicar
+        id: deployment
+        uses: actions/deploy-pages@v4

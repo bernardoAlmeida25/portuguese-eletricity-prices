@@ -1,0 +1,52 @@
+# Recolha de dados: OMIE (diário) + E-REDES (mensal) + agregados.
+# Corre às 12:30 UTC = 13:30 (inverno) / 14:30 (verão) em Portugal,
+# logo a seguir ao OMIE publicar o preço do dia D+1 (~13h).
+# No fim faz commit dos CSVs em data/; a publicação do site fica no
+# deploy-site.yml, que dispara via workflow_run quando este termina.
+name: Recolher dados
+
+on:
+  schedule:
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit dos CSVs atualizados
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Preços OMIE (continua a partir do último dia no CSV)
+        run: |
+          OMIE=main.py
+          [ -f fetch_omie.py ] && OMIE=fetch_omie.py
+          uv run "$OMIE"
+
+      - name: Consumos E-REDES (mensais; falhar não bloqueia o resto)
+        run: uv run fetch_eredes.py
+        continue-on-error: true
+
+      - name: Agregar (stats.json + CSVs para download)
+        run: uv run build_site_data.py
+
+      # site/data/ está no .gitignore (é regenerado em cada build);
+      # este commit só mexe no estado em data/
+      - name: Commit dos dados
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "sem alterações"; else
+            git commit -m "data: atualização automática $(date -u +'%Y-%m-%d')"
+          fi
